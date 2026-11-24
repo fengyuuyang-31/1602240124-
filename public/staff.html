@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>信义口腔 · 工作人员登录</title>
+  <link rel="stylesheet" href="/css/common.css">
+  <link rel="stylesheet" href="/css/auth.css">
+</head>
+<body>
+  <div class="auth-bg">
+    <a class="brand" href="/">🏥 信义口腔 <span>连锁管理系统</span></a>
+    <div class="auth-card">
+      <div class="auth-head">
+        <div class="big">工作人员登录</div>
+        <div class="sub">工号 / 姓名 + 密码，登录后进入对应岗位工作台</div>
+      </div>
+
+      <div class="seg" id="seg">
+        <button class="active" data-mode="login">登录</button>
+        <button data-mode="register">注册账号</button>
+      </div>
+
+      <!-- 登录 -->
+      <form id="login-form" class="auth-form">
+        <label>工号 / 姓名 / 手机号</label>
+        <input id="lg-account" placeholder="如 XY001 或 王建国" autocomplete="username">
+        <label>密码</label>
+        <input id="lg-pwd" type="password" placeholder="演示密码 123456" autocomplete="current-password">
+        <div class="err" id="lg-err"></div>
+        <button class="btn block" type="submit">登录工作台</button>
+        <div class="hint">演示账号见下方「演示账号」卡片；新员工请先注册，经分院负责人或院长审批后即可登录。</div>
+      </form>
+
+      <!-- 注册 -->
+      <form id="reg-form" class="auth-form" style="display:none">
+        <label>姓名</label><input id="rg-name" placeholder="真实姓名">
+        <label>手机号</label><input id="rg-phone" placeholder="登录用手机号">
+        <label>岗位</label>
+        <select id="rg-role">
+          <option value="牙医">牙医</option><option value="前台">前台</option>
+          <option value="库管员">库管员</option><option value="护士">护士</option>
+          <option value="负责人">分院负责人</option><option value="院长">院长</option>
+        </select>
+        <label>密码</label><input id="rg-pwd" type="password" placeholder="设置登录密码">
+        <label>确认密码</label><input id="rg-pwd2" type="password" placeholder="再次输入密码">
+        <div class="err" id="rg-err"></div>
+        <button class="btn block" type="submit">提交注册</button>
+        <div class="hint">无需填工号，系统自动生成。注册成功后会向手机号发送短信通知；账号需分院负责人或院长任一方审批通过后才能登录。</div>
+      </form>
+
+      <div class="demo">
+        <div class="demo-title">演示账号（密码统一 123456）</div>
+        <div class="demo-grid">
+          <div><b>院长（兼牙医）</b><span>XY001 · 王建国</span></div>
+          <div><b>前台</b><span>XY002 · 李晓</span></div>
+          <div><b>库管</b><span>XY003 · 赵敏</span></div>
+          <div><b>牙医</b><span>XY010 · 张伟</span></div>
+          <div><b>分院负责人</b><span>XY005 · 林岚</span></div>
+          <div><b>分院负责人</b><span>XY006 · 何倩</span></div>
+        </div>
+      </div>
+    </div>
+    <a class="back" href="/">← 返回系统入口</a>
+  </div>
+  <div id="toast-root"></div>
+  <script src="/js/core.js?v=6"></script>
+  <script src="/js/staff.js?v=6"></script>
+</body>
+</html>

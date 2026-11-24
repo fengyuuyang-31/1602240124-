@@ -1,0 +1,183 @@
+# 信义口腔系统 · 华为云服务器部署指南
+
+本系统有两种运行方式：
+
+- **方式一（本地内存库）**：只在自己电脑演示，数据重启即丢，适合开发调试。
+- **方式二（服务器 PostgreSQL）**：正式部署，数据持久化，任何人可通过公网 IP 访问，适合作业答辩演示。
+
+本文件只讲**方式二**。已按老师板书技术倾向（PostgreSQL + 独立 worker + 模拟适配）落地。
+
+---
+
+## 一、部署前准备（在华为云控制台做一次）
+
+1. **放行端口**：进入该服务器的安全组，添加入站规则，放行 TCP `3000`（源地址 `0.0.0.0/0`）。答辩要用 `http://服务器公网IP:3000` 访问。
+2. **确认 Docker 与 Portainer 已安装**：服务器上 `docker -v` 有输出即可；Portainer 能打开网页。
+
+---
+
+## 二、上传项目到服务器
+
+把整个 `dental-chain` 文件夹上传到服务器，例如 `/opt/xinyi`：
+
+```bash
+# 在本地压缩（排除 node_modules，体积更小）
+cd C:/Users/Feng.rainbow/WorkBuddy/2026-11-23-17-26-49
+tar -czf dental-chain.tar.gz --exclude=node_modules dental-chain
+
+# 上传到服务器（用你习惯的工具：scp / WinSCP / xftp 均可）
+scp dental-chain.tar.gz root@服务器IP:/opt/
+
+# 在服务器上解压
+ssh root@服务器IP
+mkdir -p /opt/xinyi && cd /opt
+tar -xzf dental-chain.tar.gz -C /opt/xinyi --strip-components=1
+```
+
+> 说明：`--strip-components=1` 是把 `dental-chain/` 这一层去掉，直接放到 `/opt/xinyi` 下，这样 `docker-compose.yml` 就在 `/opt/xinyi/` 里。
+
+---
+
+## 三、实际部署记录（华为云 Flexus，2026-11-24）
+
+### 2026-11-24 13:06 换服务器重部署（当前生效版本）
+
+更换云服务器后重新部署，新机器为 Ubuntu 24.04.4（hostname `<服务器主机名>`）、Docker 29.6.1，公网 IP 仍为 `<服务器公网IP>`。该机 Docker 未配置镜像加速器，拉取 `node:22-alpine` 直接连 registry-1.docker.io 超时；配置 `/etc/docker/daemon.json` 镜像加速器后正常：
+
+```json
+{
+  "registry-mirrors": [
+    "https://0dd0e37c180040b2ab9714aefbd01ab8.mirror.swr.myhuaweicloud.com",
+    "https://docker.m.daocloud.io",
+    "https://registry.cn-hangzhou.aliyuncs.com"
+  ]
+}
+```
+
+配置后 `systemctl restart docker`，重新执行部署脚本成功。三容器 `xinyi-postgres` / `xinyi-app` / `xinyi-worker` 全部运行，验证通过：`/api/health` ok、首页 200、34 张表、64 项价目、正畸 21 档、员工登录（XY001 王建国）正常；公网 `http://<服务器公网IP>:3000` 可访问。
+
+> 换服务器部署要点：本机首次部署需先配镜像加速器；用 `deploy_remote.py`（paramiko 上传）＋ `deploy-server.sh`（docker run 编排）可一键完成，脚本会清理旧容器/数据卷后重建。
+
+### 历史记录（旧服务器）
+
+旧服务器为华为云 Flexus（Ubuntu 22.04，Docker 29.1.3），公网 IP `<服务器公网IP>`。该服务器 **apt 源里没有 `docker-compose-plugin`，GitHub / 国内镜像均下载超时**，因此没有用 compose，改用 `docker run` 手动编排三容器，效果完全相同：
+
+```bash
+# 1. 上传并解压（本地打包后 scp 到 /tmp）
+mkdir -p /opt/xinyi
+tar -xzf /tmp/dental-chain-deploy.tar.gz -C /opt/xinyi --strip-components=1
+
+# 2. 构建应用镜像（基础镜像 node:22-alpine / postgres:16-alpine 可正常拉取）
+cd /opt/xinyi && docker build -t xinyi-app:latest .
+
+# 3. 建网络 + 起三容器
+docker network create xinyi-net
+docker run -d --name xinyi-postgres --network xinyi-net \
+  -e POSTGRES_DB=xinyi_dental -e POSTGRES_USER=xinyi -e POSTGRES_PASSWORD=xinyi_mock_2026 \
+  -v xinyi-pgdata:/var/lib/postgresql/data --restart unless-stopped postgres:16-alpine
+docker run -d --name xinyi-app --network xinyi-net \
+  -e DATABASE_URL=postgres://xinyi:xinyi_mock_2026@xinyi-postgres:5432/xinyi_dental \
+  -e NODE_ENV=production -e PORT=3000 -p 3000:3000 --restart unless-stopped xinyi-app:latest
+docker run -d --name xinyi-worker --network xinyi-net \
+  -e DATABASE_URL=postgres://xinyi:xinyi_mock_2026@xinyi-postgres:5432/xinyi_dental \
+  -e WORKER_INTERVAL_MS=60000 -e NODE_ENV=production --restart unless-stopped \
+  xinyi-app:latest node dist/worker.js
+```
+
+部署后验证（均通过）：`/api/health` 返回 ok、首页 200、34 张表可读、员工登录返回王建国 token。
+
+**安全组 3000 端口已放行**，公网 `http://<服务器公网IP>:3000` 可正常访问。
+
+**重新部署（表结构变更后）**：需要删数据卷重建，否则旧表结构残留：
+
+```bash
+docker rm -f xinyi-app xinyi-worker xinyi-postgres
+docker volume rm xinyi-pgdata        # 清空旧库，让新 schema 生效
+rm -rf /opt/xinyi && mkdir -p /opt/xinyi
+tar -xzf /tmp/dental-chain-deploy.tar.gz -C /opt/xinyi --strip-components=1
+docker rmi -f xinyi-app:latest
+cd /opt/xinyi && docker build -t xinyi-app:latest .
+# 再按上面的 docker run 三条命令起三容器
+```
+
+2026-11-24 最终版验证：PostgreSQL 34 张表、64 项价目（正畸 21 档）、患者计划明细可查看、documents 接口已移除、公网首页 200。
+
+> 若某台服务器已装好 compose 插件，仍可直接用本文的方式 A / B。
+
+---
+
+## 四、方式 A：Portainer 网页部署（推荐）
+
+1. 浏览器打开 Portainer，登录。
+2. 左侧 **Stacks** → **Add stack**。
+3. Name 填 `xinyi`。
+4. Build method 选 **Upload**，上传服务器上的 `/opt/xinyi/docker-compose.yml`。
+   - 注意：如果 Portainer 提示找不到构建上下文，改用下面「方式 B」命令部署，最稳。
+5. 页面下方 **Environment variables** 添加：
+
+   | 键 | 值（示例） | 说明 |
+   |---|---|---|
+   | `POSTGRES_DB` | `xinyi_dental` | 数据库名 |
+   | `POSTGRES_USER` | `xinyi` | 数据库账号 |
+   | `POSTGRES_PASSWORD` | 换成你自己的强密码 | 数据库密码 |
+   | `APP_PORT` | `3000` | 对外端口 |
+   | `WORKER_INTERVAL_MS` | `60000` | 复诊提醒周期（毫秒） |
+
+6. 点 **Deploy the stack**。等待 1–3 分钟（首次要拉镜像、编译 TypeScript）。
+7. 三个容器起来后（`xinyi-postgres`、`xinyi-app`、`xinyi-worker`），浏览器访问 `http://服务器公网IP:3000`。
+
+---
+
+## 五、方式 B：SSH 命令一键部署（最省事）
+
+如果 SSH 能登录服务器，登陆后执行：
+
+```bash
+cd /opt/xinyi
+cp .env.example .env
+# 修改 .env 里的 POSTGRES_PASSWORD 为你自己的强密码
+nano .env
+
+# 启动（ADVISORY LOCK 已处理 app/worker 并发初始化，不会重复灌种子）
+docker compose up -d --build
+
+# 查看状态
+docker compose ps
+docker compose logs -f app    # 看到 "[server] 信义口腔系统已启动" 即成功
+```
+
+访问 `http://服务器公网IP:3000`。
+
+---
+
+## 六、演示账号（密码统一 123456）
+
+| 账号 | 身份 |
+|---|---|
+| XY001 | 院长（兼医生，可切换身份） |
+| XY002 | 前台 |
+| XY003 | 库管 |
+| XY005 / XY006 | 分院负责人 |
+| 患者 | 手机号 `13800010001` + 验证码 `1234` |
+
+---
+
+## 七、常见问题
+
+- **打不开网页**：先确认安全组放行了 3000 端口；再 `docker compose logs app` 看是否报错。
+- **容器起不来**：`docker compose ps` 看哪个容器退出，`docker compose logs 容器名` 查具体错误。
+- **端口冲突**：改 `.env` 里的 `APP_PORT`（比如 `3001`），安全组同步放行新端口。
+- **数据持久化**：数据库在名为 `pgdata` 的 volume 里，容器重启/重建数据都在；只有手动删 volume 才会丢。
+- **更新代码**：重新上传文件后执行 `docker compose up -d --build` 即可。
+
+---
+
+## 八、与本地方式的区别小结
+
+| | 本地（方式一） | 服务器（方式二） |
+|---|---|---|
+| 数据库 | pg-mem 内存库 | PostgreSQL |
+| 数据 | 重启即丢 | 持久化 |
+| 访问 | 仅 localhost | 公网 IP，任何设备 |
+| 启动 | `DB_MODE=memory npm run dev` | `docker compose up -d --build` |
+| 用途 | 开发调试 | 正式演示/提交 |
